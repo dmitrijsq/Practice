@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Traffic Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        input, button, select {
+            margin: 5px;
+            padding: 5px;
+        }
+        canvas {
+            max-width: 100%;
+            margin-top: 20px;
+        }
+        .auth-forms {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .auth-forms > div {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Network Traffic Monitor</h1>
+
+        <!-- Формы авторизации и регистрации -->
+        <div class="auth-forms">
+            <!-- Форма входа -->
+            <div id="login-form">
+                <h2>Login</h2>
+                <input type="text" id="username" placeholder="Username">
+                <input type="password" id="password" placeholder="Password">
+                <button onclick="login()">Login</button>
+                <p id="login-error" style="color: red;"></p>
+            </div>
+
+            <!-- Форма регистрации -->
+            <div id="register-form">
+                <h2>Register</h2>
+                <input type="text" id="reg-username" placeholder="Username">
+                <input type="password" id="reg-password" placeholder="Password">
+                <button onclick="register()">Register</button>
+                <p id="register-error" style="color: red;"></p>
+            </div>
+        </div>
+
+        <!-- Фильтр для данных -->
+        <div id="filter-form" style="display: none;">
+            <h3>Filter Traffic</h3>
+            <input type="text" id="ip-filter" placeholder="Source IP">
+            <select id="protocol-filter">
+                <option value="">All Protocols</option>
+                <option value="TCP">TCP</option>
+                <option value="UDP">UDP</option>
+                <option value="ICMP">ICMP</option>
+                <option value="HTTP">HTTP</option>
+                <option value="HTTPS">HTTPS</option>
+            </select>
+            <input type="text" id="port-filter" placeholder="Port">
+            <button onclick="updateChart()">Apply Filter</button>
+        </div>
+
+        <!-- График -->
+        <canvas id="trafficChart"></canvas>
+    </div>
+
+    <script>
+        let token = localStorage.getItem('authToken');
+        let updateInterval;
+
+        // Функция входа
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            const response = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                token = data.token;
+                localStorage.setItem('authToken', token);
+                document.getElementById('filter-form').style.display = 'block';
+                startAutoUpdate(); // Запускаем автоматическое обновление
+                updateChart();
+            } else {
+                document.getElementById('login-error').innerText = data.error || 'Login failed!';
+            }
+        }
+
+        // Функция регистрации
+        async function register() {
+            const username = document.getElementById('reg-username').value;
+            const password = document.getElementById('reg-password').value;
+
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                alert(data.message);
+            } else {
+                document.getElementById('register-error').innerText = data.error || 'Registration failed!';
+            }
+        }
+
+        // Функция получения данных
+        async function fetchData() {
+            if (!token) return;
+
+            const ip = document.getElementById('ip-filter').value;
+            const protocol = document.getElementById('protocol-filter').value;
+            const port = document.getElementById('port-filter').value;
+
+            let queryParams = new URLSearchParams();
+            if (ip) queryParams.append('source', ip);
+            if (protocol) queryParams.append('protocol', protocol);
+            if (port) queryParams.append('port', port);
+
+            const response = await fetch(`/data?${queryParams.toString()}`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+
+            if (response.status === 401) {
+                alert('Unauthorized! Please log in again.');
+                localStorage.removeItem('authToken');
+                location.reload();
+                return;
+            }
+
+            return await response.json();
+        }
+
+        // Функция обновления графика
+        async function updateChart() {
+            const data = await fetchData();
+            if (!data) return;
+
+            const protocols = {};
+            data.forEach(packet => {
+                if (!protocols[packet.protocol]) {
+                    protocols[packet.protocol] = 0;
+                }
+                protocols[packet.protocol] += packet.length;
+            });
+
+            chart.data.labels = Object.keys(protocols);
+            chart.data.datasets[0].data = Object.values(protocols);
+            chart.update();
+        }
+
+        // Функция для запуска автоматического обновления
+        function startAutoUpdate() {
+            if (updateInterval) clearInterval(updateInterval); // Очищаем предыдущий интервал
+            updateInterval = setInterval(updateChart, 5000); // Обновляем каждые 5 секунд
+        }
+
+        // Инициализация графика
+        const ctx = document.getElementById('trafficChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Traffic by Protocol (bytes)',
+                    data: [],
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+
+        // Проверка авторизации при загрузке страницы
+        if (token) {
+            document.getElementById('filter-form').style.display = 'block';
+            startAutoUpdate(); // Запускаем автоматическое обновление
+            updateChart();
+        }
+    </script>
+</body>
+</html>
